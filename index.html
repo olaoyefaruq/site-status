@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Is It Down?</title>
+<meta name="description" content="Check whether a website is up, slow, or down, and keep a watchlist with response-time history.">
+<style>
+  :root {
+    --bg: #0d1117; --panel: #151b23; --panel-2: #1b232d; --line: #263040;
+    --text: #e8ecf2; --muted: #8a96a8;
+    --up: #3ddc97; --down: #ff5c6c; --warn: #ffb84d; --accent: #7aa2ff;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f5f8; --panel: #ffffff; --panel-2: #f0f2f6; --line: #dde1e9;
+      --text: #141922; --muted: #627086;
+      --up: #0b9a60; --down: #d12b3e; --warn: #a96300; --accent: #2a56e8;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f5f8; --panel: #ffffff; --panel-2: #f0f2f6; --line: #dde1e9;
+    --text: #141922; --muted: #627086;
+    --up: #0b9a60; --down: #d12b3e; --warn: #a96300; --accent: #2a56e8;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 var(--sans); }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 28px; }
+  h1 { font-size: 1.15rem; margin: 0; letter-spacing: .02em; display: flex; align-items: center; gap: 10px; }
+  h1 .pulse { width: 10px; height: 10px; border-radius: 50%; background: var(--up); box-shadow: 0 0 0 0 var(--up); animation: pulse 2.4s infinite; }
+  @keyframes pulse { 70% { box-shadow: 0 0 0 9px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  @media (prefers-reduced-motion: reduce) { h1 .pulse { animation: none; } }
+  .ghost { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: .85rem; cursor: pointer; }
+  .ghost:hover { color: var(--text); border-color: var(--muted); }
+  .lead { font-size: 1.9rem; line-height: 1.2; margin: 0 0 6px; font-weight: 650; letter-spacing: -.01em; }
+  .sub { color: var(--muted); margin: 0 0 22px; }
+
+  form { display: flex; gap: 8px; }
+  input[type="text"], input[type="url"] {
+    flex: 1; min-width: 0; background: var(--panel); border: 1px solid var(--line); color: var(--text);
+    border-radius: 10px; padding: 14px 16px; font: 1rem var(--mono);
+  }
+  input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .go { background: var(--accent); color: #fff; border: 0; border-radius: 10px; padding: 0 22px; font: 600 1rem var(--sans); cursor: pointer; }
+  .go:disabled { opacity: .6; cursor: progress; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .go { color: #0d1117; } }
+  :root[data-theme="dark"] .go { color: #0d1117; }
+
+  .setup { margin: 14px 0 0; padding: 14px; background: var(--panel); border: 1px dashed var(--warn); border-radius: 10px; font-size: .92rem; }
+  .setup p { margin: 0 0 10px; }
+  .setup form { gap: 8px; }
+  .setup input { padding: 10px 12px; font-size: .9rem; }
+  .setup .go { padding: 0 16px; }
+
+  #result { margin-top: 18px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  .verdict { display: flex; align-items: center; gap: 12px; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; flex: none; background: var(--muted); }
+  .up .dot { background: var(--up); } .slow .dot, .blocked .dot { background: var(--warn); }
+  .down .dot { background: var(--down); } .error .dot { background: var(--muted); }
+  .verdict h2 { margin: 0; font-size: 1.35rem; }
+  .up h2 { color: var(--up); } .slow h2, .blocked h2 { color: var(--warn); } .down h2 { color: var(--down); }
+  .host { color: var(--muted); font-family: var(--mono); font-size: .9rem; word-break: break-all; margin: 2px 0 0 26px; }
+  .why { margin: 14px 0 0; }
+  dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 16px 0 0; }
+  dl div { background: var(--panel-2); border-radius: 10px; padding: 10px 12px; }
+  dt { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  dd { margin: 2px 0 0; font: .95rem var(--mono); word-break: break-all; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  .note { color: var(--muted); font-size: .85rem; margin: 14px 0 0; }
+
+  section.list { margin-top: 36px; }
+  .list-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .list-head h3 { margin: 0; font-size: 1rem; }
+  .tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  label.auto { color: var(--muted); font-size: .85rem; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .empty { color: var(--muted); text-align: center; padding: 28px 12px; border: 1px dashed var(--line); border-radius: 12px; }
+  ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+  li.row { display: grid; grid-template-columns: 14px 1fr auto auto; gap: 12px; align-items: center;
+           background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  li.row .name { font: .95rem var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  li.row .meta { color: var(--muted); font-size: .78rem; margin-top: 1px; }
+  .spark { display: block; }
+  .rm { background: none; border: 0; color: var(--muted); font-size: 1.2rem; line-height: 1; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+  .rm:hover { color: var(--down); }
+  .row .dot { width: 10px; height: 10px; }
+  .row.up .dot { background: var(--up); } .row.slow .dot, .row.blocked .dot { background: var(--warn); } .row.down .dot { background: var(--down); }
+  .row.checking .dot { animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+  @media (max-width: 520px) { li.row { grid-template-columns: 14px 1fr auto; } .spark { display: none; } .lead { font-size: 1.5rem; } }
+
+  details { margin-top: 36px; color: var(--muted); font-size: .92rem; }
+  summary { cursor: pointer; color: var(--text); }
+  details ul { display: block; list-style: disc; padding-left: 20px; margin-top: 8px; }
+  details li { margin: 6px 0; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: .88rem; opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span class="pulse" aria-hidden="true"></span> Is It Down?</h1>
+    <button class="ghost" id="theme" type="button" aria-label="Toggle light and dark theme">Theme</button>
+  </header>
+
+  <p class="lead">Is that site down, or is it just you?</p>
+  <p class="sub">Enter any website address. We check it from Cloudflare's network and tell you what came back.</p>
+
+  <form id="form" autocomplete="off">
+    <input type="text" id="url" inputmode="url" placeholder="example.com" aria-label="Website address" autocapitalize="off" spellcheck="false" required>
+    <button class="go" id="go" type="submit">Check</button>
+  </form>
+
+  <div class="setup" id="setup" hidden>
+    <p><strong>One-time setup:</strong> paste your Worker URL (the one <code>wrangler deploy</code> printed). It's saved in this browser, or you can hard-code it as <code>DEFAULT_API</code> in this file.</p>
+    <form id="apiForm">
+      <input type="url" id="apiInput" placeholder="https://site-status-checker.yourname.workers.dev" aria-label="Worker URL">
+      <button class="go" type="submit">Save</button>
+    </form>
+  </div>
+
+  <div id="result" aria-live="polite"></div>
+
+  <section class="list">
+    <div class="list-head">
+      <h3>Watchlist</h3>
+      <div class="tools">
+        <label class="auto"><input type="checkbox" id="auto"> Auto-refresh (1 min)</label>
+        <button class="ghost" id="recheck" type="button">Recheck all</button>
+      </div>
+    </div>
+    <ul id="list"></ul>
+    <div class="empty" id="empty">Sites you add show up here with their recent response times.</div>
+  </section>
+
+  <details>
+    <summary>It says "up" but I can't open it. Why?</summary>
+    <ul>
+      <li>This tool checks from Cloudflare's servers, not from your phone or ISP. A site can be fine globally and still be blocked or throttled on your network.</li>
+      <li>Try a different network (mobile data vs. Wi-Fi), a VPN, or public DNS such as 1.1.1.1 or 8.8.8.8.</li>
+      <li>"Up, but refused our check" (HTTP 401/403/429) means the server is running but rejects automated requests.</li>
+      <li>If it says the domain doesn't resolve, the name is mistyped, expired, or its DNS is broken.</li>
+    </ul>
+  </details>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+// ---- Config -------------------------------------------------------------
+// Put your deployed Worker URL here, or paste it into the setup box on the page.
+const DEFAULT_API = "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev";
+const MAX_HISTORY = 30;
+const REFRESH_MS = 60000;
+
+// ---- Storage (wrapped: can throw in private mode) -------------------------
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+let api = (store.get("api", "") || DEFAULT_API).replace(/\/+$/, "");
+let watch = store.get("watch", []).map(({ url, history }) => ({ url, history: history || [] })); // [{ url, history: [{t, state, ms, status}] }]
+let timer = null;
+
+const $ = (id) => document.getElementById(id);
+const apiReady = () => !api.includes("YOUR-WORKER");
+
+// ---- Helpers --------------------------------------------------------------
+function h(tag, attrs = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v);
+  }
+  for (const kid of kids) el.append(kid);
+  return el;
+}
+function normalize(raw) {
+  raw = (raw || "").trim();
+  if (!raw) return null;
+  if (!/^https?:\/\//i.test(raw)) raw = "https://" + raw;
+  try {
+    const u = new URL(raw);
+    if (!u.hostname.includes(".")) return null;
+    return u.pathname === "/" && !u.search && !u.hash ? u.origin : u.href;
+  } catch { return null; }
+}
+const shortName = (url) => url.replace(/^https?:\/\//, "");
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 1800);
+}
+function ago(iso) {
+  const s = Math.max(0, (Date.now() - new Date(iso)) / 1000);
+  if (s < 10) return "just now";
+  if (s < 60) return Math.floor(s) + "s ago";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  return Math.floor(s / 3600) + "h ago";
+}
+
+// ---- Calling the Worker ---------------------------------------------------
+async function checkSite(url) {
+  try {
+    const r = await fetch(`${api}/?url=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(20000) });
+    const d = await r.json();
+    if (!d.state) return { state: "error", message: d.error || `Checker returned HTTP ${r.status}` };
+    return d;
+  } catch {
+    return { state: "error", message: "Couldn't reach the checker service. Check the Worker URL and your connection." };
+  }
+}
+
+// ---- Result card ----------------------------------------------------------
+const TITLES = { up: "It's up", slow: "Up, but slow", blocked: "Up (refused our check)", down: "It's down", error: "Couldn't check" };
+
+function explain(d) {
+  if (d.state === "up") return "The site answered normally. If you still can't open it, the problem is probably on your side (network, DNS, or ISP).";
+  if (d.state === "slow") return "The site answered, but it took a long time. It may be overloaded.";
+  if (d.state === "blocked") return `The server replied with HTTP ${d.status}, so it's running, but it rejects automated requests. It's most likely fine for normal visitors.`;
+  if (d.state === "down") return (d.error || "No valid response.") + ". If other people report the same, it's a real outage.";
+  return d.message;
+}
+
+function renderResult(d, url) {
+  const box = $("result"); box.replaceChildren();
+  const card = h("div", { class: "card " + d.state });
+  card.append(
+    h("div", { class: "verdict" }, h("span", { class: "dot" }), h("h2", {}, TITLES[d.state] || "Result")),
+    h("p", { class: "host" }, shortName(url)),
+    h("p", { class: "why" }, explain(d))
+  );
+  if (d.state !== "error") {
+    const facts = [
+      ["HTTP status", d.status ?? "none"],
+      ["Response time", d.ms != null ? d.ms + " ms" : "none"],
+      ["DNS", { ok: "Resolves", fail: "Not found", unknown: "Unknown" }[d.dns] || "Unknown"],
+    ];
+    if (d.redirected && d.finalUrl) facts.push(["Redirected to", shortName(d.finalUrl)]);
+    if (d.server) facts.push(["Server", d.server]);
+    facts.push(["Checked from", d.colo ? "Cloudflare " + d.colo : "Cloudflare"]);
+    const dl = h("dl");
+    for (const [k, v] of facts) dl.append(h("div", {}, h("dt", {}, k), h("dd", {}, String(v))));
+    card.append(dl);
+  }
+  const actions = h("div", { class: "actions" });
+  if (d.state !== "error") {
+    const inList = watch.some((w) => w.url === url);
+    actions.append(
+      h("button", { class: "ghost", type: "button", onclick: () => { addToWatch(url, d); renderResult(d, url); } },
+        inList ? "In watchlist ✓" : "+ Add to watchlist"),
+      h("button", { class: "ghost", type: "button", onclick: copyLink.bind(null, url) }, "Copy share link")
+    );
+  }
+  card.append(actions);
+  box.append(card);
+}
+
+function copyLink(url) {
+  const link = location.origin + location.pathname + "?url=" + encodeURIComponent(url);
+  (navigator.clipboard?.writeText(link) || Promise.reject()).then(() => toast("Link copied"), () => toast(link));
+}
+
+// ---- Watchlist ------------------------------------------------------------
+function record(entry, d) {
+  if (d.state === "error") return;
+  entry.history.push({ t: d.checkedAt || new Date().toISOString(), state: d.state, ms: d.ms, status: d.status });
+  if (entry.history.length > MAX_HISTORY) entry.history.shift();
+}
+function addToWatch(url, d) {
+  let entry = watch.find((w) => w.url === url);
+  if (!entry) { entry = { url, history: [] }; watch.push(entry); }
+  if (d) record(entry, d);
+  store.set("watch", watch); renderList();
+}
+function removeFromWatch(url) {
+  watch = watch.filter((w) => w.url !== url);
+  store.set("watch", watch); renderList();
+}
+
+function sparkline(history) {
+  const W = 90, H = 24, svgNS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("class", "spark"); svg.setAttribute("width", W); svg.setAttribute("height", H);
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("aria-hidden", "true");
+  if (history.length < 2) return svg;
+  const max = Math.max(500, ...history.map((x) => x.ms || 0));
+  const step = W / (MAX_HISTORY - 1);
+  const x0 = W - (history.length - 1) * step;
+  const pts = []; // consecutive up-points form the line
+  const mk = (n, a) => { const e = document.createElementNS(svgNS, n); for (const k in a) e.setAttribute(k, a[k]); return e; };
+  let seg = [];
+  const flush = () => { if (seg.length > 1) svg.append(mk("polyline", { points: seg.join(" "), fill: "none", stroke: "var(--accent)", "stroke-width": 1.5, "stroke-linejoin": "round" })); seg = []; };
+  history.forEach((p, i) => {
+    const x = (x0 + i * step).toFixed(1);
+    if (p.state === "down" || p.ms == null) { flush(); svg.append(mk("rect", { x: x - 1, y: 2, width: 2, height: H - 4, fill: "var(--down)" })); }
+    else seg.push(`${x},${(H - 3 - (p.ms / max) * (H - 6)).toFixed(1)}`);
+  });
+  flush();
+  return svg;
+}
+
+function renderList() {
+  const ul = $("list"); ul.replaceChildren();
+  $("empty").hidden = watch.length > 0;
+  for (const w of watch) {
+    const last = w.history[w.history.length - 1];
+    const ups = w.history.filter((x) => x.state !== "down").length;
+    const uptime = w.history.length ? Math.round((ups / w.history.length) * 100) + "% up" : "no data";
+    const meta = last ? `${last.ms != null ? last.ms + " ms · " : ""}${uptime} · ${ago(last.t)}` : "not checked yet";
+    const row = h("li", { class: "row " + (w.checking ? "checking " : "") + (last ? last.state : ""), "data-url": w.url },
+      h("span", { class: "dot", title: last ? TITLES[last.state] : "" }),
+      h("div", { style: "min-width:0" }, h("div", { class: "name" }, shortName(w.url)), h("div", { class: "meta" }, meta)),
+      sparkline(w.history),
+      h("button", { class: "rm", type: "button", "aria-label": "Remove " + shortName(w.url), onclick: () => removeFromWatch(w.url) }, "×")
+    );
+    row.querySelector(".name").addEventListener("click", () => { $("url").value = shortName(w.url); runCheck(w.url); });
+    row.querySelector(".name").style.cursor = "pointer";
+    ul.append(row);
+  }
+}
+
+async function recheckAll() {
+  if (!apiReady() || !watch.length) return;
+  $("recheck").disabled = true;
+  const queue = [...watch];
+  watch.forEach((w) => (w.checking = true)); renderList();
+  const worker = async () => {
+    while (queue.length) {
+      const entry = queue.shift();
+      const d = await checkSite(entry.url);
+      record(entry, d); entry.checking = false;
+      store.set("watch", watch.map(({ url, history }) => ({ url, history })));
+      renderList();
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  $("recheck").disabled = false;
+}
+
+// ---- Main flow ------------------------------------------------------------
+async function runCheck(rawUrl) {
+  const url = normalize(rawUrl);
+  if (!url) { renderResult({ state: "error", message: "That doesn't look like a valid website address." }, rawUrl || ""); return; }
+  if (!apiReady()) { $("setup").hidden = false; $("apiInput").focus(); return; }
+  $("go").disabled = true; $("go").textContent = "Checking…";
+  $("result").replaceChildren(h("div", { class: "card" }, h("p", { class: "sub", style: "margin:0" }, "Checking " + shortName(url) + "…")));
+  const d = await checkSite(url);
+  const entry = watch.find((w) => w.url === url);
+  if (entry) { record(entry, d); store.set("watch", watch); renderList(); }
+  renderResult(d, url);
+  $("go").disabled = false; $("go").textContent = "Check";
+}
+
+$("form").addEventListener("submit", (e) => { e.preventDefault(); runCheck($("url").value); });
+$("apiForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const v = $("apiInput").value.trim().replace(/\/+$/, "");
+  if (!/^https:\/\/.+/.test(v)) return toast("Enter a full https:// URL");
+  api = v; store.set("api", v); $("setup").hidden = true; toast("Saved");
+  if ($("url").value) runCheck($("url").value);
+});
+$("recheck").addEventListener("click", recheckAll);
+$("auto").addEventListener("change", (e) => {
+  store.set("auto", e.target.checked);
+  clearInterval(timer);
+  if (e.target.checked) timer = setInterval(recheckAll, REFRESH_MS);
+});
+$("theme").addEventListener("click", () => {
+  const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+  const next = cur === "light" ? "dark" : "light";
+  document.documentElement.dataset.theme = next; store.set("theme", next);
+});
+
+// ---- Init -----------------------------------------------------------------
+const savedTheme = store.get("theme", null);
+if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+if (!apiReady()) $("setup").hidden = false;
+renderList();
+setInterval(renderList, 30000); // keep "x ago" fresh
+if (store.get("auto", false)) { $("auto").checked = true; timer = setInterval(recheckAll, REFRESH_MS); }
+const pre = new URLSearchParams(location.search).get("url");
+if (pre) { $("url").value = pre; runCheck(pre); }
+</script>
+</body>
+</html>
